@@ -1,0 +1,453 @@
+*ARROWS-EXTRA*
+
+
+* Overview
+This is a library of useful arrows based on Jim
+Duey's [[http://www.intensivesystems.net/tutorials/stream_proc.html]conduit
+library]
+#+name: use-arrows
+#+begin_src clojure
+(use 'conduit.core 'arrows.core)
+#+end_src
+
+#+RESULTS: use-arrows
+: ;;=> nil
+
+
+
+** Delays
+This is a little collection of delay arrows, based on a-loop
+
+*** arr-delay-state
+It is often useful to delay some part of a signal with respect to
+another part of a signal.
+
+Suppose, for example, you want to detect a rising edge in a signal
+(see arr-edge). The plan would be to have [state input], where state
+is the last input, and compare input with state
+
+A useful tool to do this is arr-delay-state, which takes [state input]
+and delays the state relative to the input by 1 cycle
+
+Obviously it is necessary to supply an initial state which will travel
+with the first input
+
+#+name: arr-delay-state
+#+begin_src clojure
+(defn arr-delay-state [init]
+
+(a-comp 
+ (a-loop (a-arr (fn [[state input]] [state input]))
+ init 
+ (a-arr (fn [input1] (first (second input1)))))
+ (a-arr (fn [[state2 [dummy input2]]] [state2 input2]))))
+#+end_src
+
+#+RESULTS: arr-delay-state
+: ;;=> #'arrows-extra.core/arr-delay-state
+
+#+RESULTS: delay-state
+|   | #'arrows-extra.core/arr-delay-state |
+
+Test
+#+begin_src clojure
+(conduit-map (arr-delay-state "hello") [["nice" 1] ["one" 2] ["yes" 3]
+["no" 4]])
+#+end_src
+
+#+RESULTS:
+: ;;=> (["hello" 1] ["nice" 2] ["one" 3] ["yes" 4])
+
+
+*** arr-delay
+Taking this forward, if you want to delay an input by 1 cycle, use
+arr-delay. Supply the first output value in init.  See the test for how it works
+
+We achieve this by duplicating the input, delaying the first of the
+duplicates with arr-delay-state, then getting the first out
+
+#+name: arr-delay
+#+begin_src clojure
+(defn arr-delay [init]
+ (a-comp (a-arr (fn [input] [input input])) 
+  (arr-delay-state init) 
+  (a-arr (fn [[input1 input2]] input1)))
+
+)
+#+end_src
+
+#+RESULTS:
+|   | #'arrows-extra.core/arr-delay |
+
+Test
+#+begin_src clojure
+(conduit-map (arr-delay "hello") ["watch" "as" "the" "delay" "works"])
+#+end_src
+
+#+RESULTS:
+|   | ("hello" "watch" "as" "the" "delay") |
+
+** Information providers
+This group contains arrows which tell you something about the input
+
+ An edge arrows tells you that the input has risen or fallen
+with respect to the last cycle
+
+
+
+*** arr-edge
+Detect a rising or falling edge when applying a compare-fn to the
+input data. The compare-fn takes a two parameters, compares them, and
+returns positive, 0 or negative integer.
+
+The input must have an event channel [{:someevent true}
+input] into which the rising and falling events will be written as
+{:edge :rising} or {:edge :falling}
+
+#+name: arr-edge
+#+begin_src clojure
+(defn arr-edge [compare-fn]
+  (a-comp
+   (a-all
+    (arr-delay nil)
+    pass-through)
+   ; :: [[ev1 last] [ev2 next]]
+   (a-arr (fn [[[ev1 last] [ev2 next]]] [(if last (compare-fn last next) 0) ev2 next]))
+   ; :: [comp ev2 next]
+   (a-arr (fn [[comp ev data]] [(if (not (= 0 comp)) (assoc ev :edge (if (> 0 comp) :rising :falling)) ev) data]))
+          )
+
+  )
+#+end_src
+
+#+RESULTS: arr-edge
+|   | #'arrows-extra.core/arr-edge | 
+
+Test
+#+begin_src clojure
+
+(conduit-map (a-comp 
+  ;add an event channel
+  (a-all (a-arr (constantly {}))
+          pass-through)
+  (arr-edge (fn [last input] (- last input)))
+  ) 
+  [0 0 1 2 2 1 0])
+#+end_src  
+
+#+RESULTS:
+|   | ([{} 0] [{} 0] [{:edge :rising} 1] [{:edge :rising} 2] [{} 2] [{:edge :falling} 1] [{:edge :falling} 0]) |
+
+
+** Switches
+ A switch sends a signal to different paths depending on a predicate. a-select is of
+course an example of a switch. Here are some more
+
+ 
+
+*** arr-switch
+Although a-select and a-selectp allow switching between channels, it
+useful to generalise these with an arrow which can maintain a state
+and switch by reference to that state i.e. composing a-select with
+a-loop, as it were
+
+For example, the arr-switch-between arrow will switch the first n
+instances to channel1 and the remaining instances to channel 2. For
+this purpose it needs to maintain a count. It uses arr-switch to do
+this. It passes the state updating function (inc state) and the
+testing predicate (>= state lower)
+
+#+name: arr-switch-between
+#+begin_src clojure
+(defn arr-switch-between [lower upper trueChannel falseChannel]
+  (arr-switch -1  (fn [state input] (inc state)) (fn [state] (and (>= state lower) (<= state upper))) trueChannel falseChannel)
+  )
+
+#+end_src
+
+#+RESULTS: arr-switch-between
+|   | #'arrows-extra.core/arr-switch-between |
+
+So the arr-switch arrow itself is basically an a-loop followed adding
+a true false channel based on the predicate, followed by an a-select:
+
+#+name: arr-switch
+#+begin_src clojure
+(defmacro arr-switch [init state-fn pred-fn trueChannel falseChannel]
+
+  `(a-comp
+   (a-loop (a-arr (fn [[state# input#]] [(~state-fn state# input#) input#]))
+         ~init
+         (a-arr first)
+         )
+    (a-par
+ 
+     (a-arr (fn [state#] (~pred-fn state#)))
+      pass-through
+   )
+  (a-select true ~trueChannel false ~falseChannel)
+)
+)
+#+end_src
+
+#+RESULTS:
+|   | #'arrows-extra.core/arr-switch |
+
+Test this using arr-switch-between
+
+#+begin_src clojure
+(conduit-map (arr-switch-between 2 4 (a-arr (fn[input] (str
+"channel1:" input))) (a-arr (fn[input] (str "channel2:" input))))
+(range 0 10))
+
+#+end_src
+
+#+RESULTS:
+|   | ("channel2:0" "channel2:1" "channel1:2" "channel1:3" "channel1:4" "channel2:5" "channel2:6" "channel2:7" "channel2:8" "channel2:9") |
+
+
+
+
+
+
+** Gates
+*** Block
+It is often necessary to block one branch of an arrow
+e.g. (a-select :yes pass-through :no block)
+
+#+name: block
+#+begin_src clojure
+
+(def-proc block [input]
+ []
+)
+
+#+end_src
+
+#+RESULTS: block
+|   | #'arrows-extra.core/block |
+
+*** Filter
+Filter a signal by predicate
+e.g. (a-comp arr-sometimes-nil-producer (arr-filter nil?))
+#+name: arr-filter
+#+begin_src clojure 
+(defn arr-filter [pred]
+ (a-if (partial apply pred) pass-through block)
+)
+#+end_src
+
+*** arr-toggle
+A toggle takes two predicates: pred-on and pred-off. It outputs 
+ until pred-on is true until pred-off is true
+
+#+name: arr-toggle
+#+begin_src clojure
+(defn arr-toggle [pred-on pred-off]
+(a-comp
+(a-loop 
+ (a-arr (fn [[state input]] [(if (pred-off input) false (or state
+ (pred-on input))) input])) 
+ false
+ (a-arr first))
+ (a-select true pass-through false block)
+ )
+) 
+#+end_src
+
+#+RESULTS: arr-toggle
+|   | #'arrows-extra.core/arr-toggle |
+
+Test
+#+begin_src clojure
+(conduit-map (arr-toggle (fn [input] (== input 3)) (fn [input] (==
+input 5))) (range 0 10))
+
+#+end_src
+
+#+RESULTS:
+|   | (3 4) |
+
+*** arr-toggle-inclusive
+As for arr-toggle except that the data which triggered pred-off is forwarded
+We do this by feeding [state data] through an edge detector, and where
+a falling edge is detected,
+ ensuring state is 'true' :: [data] -> [data] | []"
+
+#+name: arr-toggle-inclusive
+#+begin_src clojure
+(defn- boolean-to-int [value]
+
+  (if value 1 0)
+  )
+
+
+(defn arr-toggle-inclusive [pred-on pred-off]
+                          
+                              (a-comp (a-loop (a-arr (fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input])) false (a-arr first))
+                                        ;  (a-arr (fn [data] [{} data]))
+                                      (a-all (a-arr (constantly {})) pass-through)
+                                      (arr-edge (fn [lst nxt] (- (boolean-to-int (first lst)) (boolean-to-int (first nxt)))))
+                                      (a-arr (fn [[ev [state data]]] [(or state (= (:edge ev) :falling)) data]))
+                                      (a-select true pass-through false block)
+
+                                      )
+
+                              )
+#+end_src
+
+#+RESULTS: arr-toggle-inclusive
+|   | #'arrows-extra.core/arr-toggle-inclusive |
+
+Test
+#+begin_src clojure
+(conduit-map (arr-toggle-inclusive (fn [input] (== input 3)) (fn [input] (==
+input 5))) (range 0 10))
+
+#+end_src
+
+#+RESULTS:
+|   | (3 4 5) |
+
+*** arr-gate
+This is a switch into a block or pass-through. So you can gate a
+channel depending on a state function
+
+#+name: arr-gate
+#+begin_src clojure
+(defn arr-gate [init state-fn pred-fn]
+  (arr-switch init state-fn pred-fn pass-through block)
+)
+#+end_src
+
+#+RESULTS: arr-gate
+|   | #'arrows-extra.core/arr-gate |
+
+Test with arr-between, which allows the cycles from n to m to pass
+through
+
+#+name: arr-between
+#+begin_src clojure
+(defn arr-between [lower upper]
+  (arr-gate -1 (fn [state input] (inc state)) (fn [state] (and (>= state lower) (<= state upper))))
+  )
+  
+(def arr-once
+  (arr-between 0 0)
+  )
+#+end_src
+
+#+RESULTS: arr-between
+|   | #'arrows-extra.core/arr-once |
+
+#+begin_src clojure
+
+(conduit-map (arr-between 2 4) (range 0 10))
+#+end_src
+
+#+RESULTS:
+|   | (2 3 4) |
+
+
+
+** Accumulators
+*** arr-accum and arr-accum-greedy
+These are the arrow equivalents of the reduce function, reducing the
+time series using accum-fn until the predicate function returns
+true. At this point, the arrow spits out the accumulated value.
+
+In the greedy version, the state is also updated once when the predicate is
+true.
+
+Both accum-fn and pred a 2-ary functions of [state input]
+
+#+name: arr-accum
+#+begin_src clojure
+(defn arr-accum
+  
+
+  [init accum-fn pred]
+
+  (a-comp (a-loop (a-arr (fn [[state input]] (if (pred state input)
+ [state input] [(accum-fn state input) input])))
+            init 
+            (a-arr (fn [[ state input]] (if (pred state input) init
+ state))))
+            (a-selectp (fn [[state input]] (pred state input))  true (a-arr first) false block)) 
+  )
+
+(defn arr-accum-greedy [init accum-fn pred]
+(a-comp (a-loop (a-arr (fn [[state input]] [(accum-fn state input)
+ input]))
+ init (a-arr first)) 
+(a-selectp (fn [[state input]] (pred state input))  true (a-arr first) false block) )
+)
+#+end_src 
+
+#+RESULTS:
+|   | #'arrows-extra.core/arr-accum-greedy |
+
+Test 
+#+begin_src clojure
+
+
+#+end_src
+
+** Interfacing - lifting and dropping
+It is often the case that the output from one arrow needs to be lifted
+or dropped
+
+[state] -> [[state] ] is a lift
+and [[state] ] -> [state] is a drop
+
+#name: lift_drop
+#+begin_src clojure
+(def-proc arr-lift [input]
+
+[[input]]
+  )
+  
+
+    
+(def arr-drop
+
+  (a-par pass-through)
+  )
+#+end_src
+
+#+RESULTS:
+|   | #'arrows-extra.core/arr-drop |
+
+
+
+* Tangle
+
+#+begin_src clojure :tangle src/arrows_extra/core.clj :noweb yes
+(ns arrows-extra.core)
+<<use-arrows>>
+<<block>>
+<<arr-filter>>
+<<arr-delay-state>>
+<<arr-delay>>
+<<arr-edge>>
+<<arr-switch>>
+<<arr-switch-between>>
+<<arr-toggle>>
+<<arr-toggle-inclusive>>
+<<arr-gate>>
+<<arr-between>>
+<<arr-once>>
+<<arr-accum>>
+
+#+end_src
+
+#+begin_src clojure :tangle project.clj
+
+(defproject arrows-extra "1.0.0"
+  :description "Arrows extra"
+  :dependencies [[org.clojure/clojure "1.2.1"]
+                 [net.intensivesystems/conduit "0.8.1"]
+                 ])
+
+
+#+end_src

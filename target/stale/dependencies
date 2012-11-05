@@ -1,0 +1,1 @@
+([:dependencies [[org.clojure/clojure "1.4.0"] [leiningen "2.0.0-preview10"] [ritz/ritz-swank "0.5.0" :exclusions [org.clojure/clojure]] [net.intensivesystems/conduit "0.8.1"]]])
