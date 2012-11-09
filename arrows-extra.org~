@@ -44,7 +44,7 @@ with the first input
 #+end_src
 
 #+RESULTS: arr-delay-state
-: ;;=> #'arrows-extra.io/arr-delay-state
+: ;;=> #'arrows-extra.core/arr-delay-state
 
 #+RESULTS: delay-state
 |   | #'arrows-extra.core/arr-delay-state |
@@ -75,9 +75,6 @@ duplicates with arr-delay-state, then getting the first out
 
 )
 #+end_src
-
-#+RESULTS: arr-delay
-: ;;=> #'arrows-extra.io/arr-delay
 
 #+RESULTS:
 |   | #'arrows-extra.core/arr-delay |
@@ -124,7 +121,7 @@ input] into which the rising and falling events will be written as
 #+end_src
 
 #+RESULTS: arr-edge
-: ;;=> #'arrows-extra.io/arr-edge
+|   | #'arrows-extra.core/arr-edge | 
 
 Test
 #+begin_src clojure
@@ -212,60 +209,6 @@ Test this using arr-switch-between
 
 
 
-*** arr-toggle-switch
-This switch passes to default path until pred-on true, then to channel1 until pred-off; or pred2, to channel2 etc
-pred-on and pred-off are 1-ary accepting [input]
-The inclusive version send the input which fires pred-off down channel1,whereas the non inclusive version sends it down default-channel
-The inclusive version works by detecting the edge as state falls from true to false.
-Could probably do this better by toggling on the derivative of state.
-#+name: arr-toggle-switches
-#+begin_src clojure
-(defn arr-toggle-switch [default-channel pred-on pred-off channel & more]
- (a-comp
-   (a-loop
-    (a-arr(fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input]))
-    false
-    (a-arr first)
-   )
-  (a-select true channel false (if (empty? more) default-channel (apply (partial arr-toggle-switch default-channel) more)))
-)
-)
-(defn- boolean-to-int [value]
-
-  (if value 1 0)
-  )
-
-
-(defn arr-toggle-switch-inclusive [default-channel pred-on pred-off channel & more]
-                          
-                              (a-comp (a-loop (a-arr (fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input])) false (a-arr first))
-                                        ;  (a-arr (fn [data] [{} data]))
-                                      (a-all (a-arr (constantly {})) pass-through)
-                                      (arr-edge (fn [lst nxt] (- (boolean-to-int (first lst)) (boolean-to-int (first nxt)))))
-                                      (a-arr (fn [[ev [state data]]] [(or state (= (:edge ev) :falling)) data]))
-                                      (a-select true channel false (if (empty? more) default-channel (apply (partial arr-toggle-switch default-channel) more)))
-
-                                      )
-
-                              )
-#+end_src
-
-#+RESULTS: arr-toggle-switches
-: ;;=> #'arrows-extra.io/arr-toggle-switch-inclusive
-
-#+RESULTS: arr-toggle-switch
-: ;;=> #'arrows-extra.io/arr-toggle-switch
-
-Test
-#+begin_src clojure
-
-(conduit-map (arr-toggle-switch-inclusive (a-arr (fn [input] (str "default" input))) (fn[input] (= input "c")) (fn[input](= input "d")) (a-arr (fn[input] (str "chn1" input)))
-(fn[input](=  input "f")) (fn[input] (= input "h")) (a-arr (fn [input] (str "chn2" input)))) ["a" "b" "c" "d" "e" "f" "g" "h" "i" "j"])
- 
-#+end_src
-
-#+RESULTS:
-: ;;=> ("defaulta" "defaultb" "chn1c" "chn1d" "defaulte" "chn2f" "chn2g" "defaulth" "defaulti" "defaultj")
 
 ** Gates
 *** Block
@@ -282,7 +225,7 @@ e.g. (a-select :yes pass-through :no block)
 #+end_src
 
 #+RESULTS: block
-: ;;=> #'arrows-extra.io/block
+|   | #'arrows-extra.core/block |
 
 *** Filter
 Filter a signal by predicate
@@ -301,12 +244,19 @@ A toggle takes two predicates: pred-on and pred-off. It outputs
 #+name: arr-toggle
 #+begin_src clojure
 (defn arr-toggle [pred-on pred-off]
- (arr-toggle-switch pass-through pred-on pred-off block)
+(a-comp
+(a-loop 
+ (a-arr (fn [[state input]] [(if (pred-off input) false (or state
+ (pred-on input))) input])) 
+ false
+ (a-arr first))
+ (a-select true pass-through false block)
+ )
 ) 
 #+end_src
 
 #+RESULTS: arr-toggle
-: ;;=> #'arrows-extra.io/arr-toggle
+|   | #'arrows-extra.core/arr-toggle |
 
 Test
 #+begin_src clojure
@@ -316,7 +266,7 @@ input 5))) (range 0 10))
 #+end_src
 
 #+RESULTS:
-: ;;=> (0 1 2 5 6 7 8 9)
+|   | (3 4) |
 
 *** arr-toggle-inclusive
 As for arr-toggle except that the data which triggered pred-off is forwarded
@@ -326,13 +276,28 @@ a falling edge is detected,
 
 #+name: arr-toggle-inclusive
 #+begin_src clojure
+(defn- boolean-to-int [value]
+
+  (if value 1 0)
+  )
+
+
 (defn arr-toggle-inclusive [pred-on pred-off]
- (arr-toggle-switch-inclusive pass-through pred-on pred-off block)
-)
+                          
+                              (a-comp (a-loop (a-arr (fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input])) false (a-arr first))
+                                        ;  (a-arr (fn [data] [{} data]))
+                                      (a-all (a-arr (constantly {})) pass-through)
+                                      (arr-edge (fn [lst nxt] (- (boolean-to-int (first lst)) (boolean-to-int (first nxt)))))
+                                      (a-arr (fn [[ev [state data]]] [(or state (= (:edge ev) :falling)) data]))
+                                      (a-select true pass-through false block)
+
+                                      )
+
+                              )
 #+end_src
 
 #+RESULTS: arr-toggle-inclusive
-: ;;=> #'arrows-extra.io/arr-toggle-inclusive
+|   | #'arrows-extra.core/arr-toggle-inclusive |
 
 Test
 #+begin_src clojure
@@ -342,7 +307,7 @@ input 5))) (range 0 10))
 #+end_src
 
 #+RESULTS:
-: ;;=> (0 1 2 6 7 8 9)
+|   | (3 4 5) |
 
 *** arr-gate
 This is a switch into a block or pass-through. So you can gate a
@@ -430,7 +395,6 @@ state as the state is sput out.
 
 A useful accumulator is a counting accumulator - accumulate using accum-fn over n cycles,
 then spit the result
-#+name: arr-accum-counting
 #+begin_src clojure
 
 (defn arr-accum-counting [init accum-fn n]
@@ -462,7 +426,26 @@ Test
 
 
 ** Interfacing between arrows
+*** Flattening
+#+name: arr-flatten
+#+begin_src clojure
+(def-proc arr-flatten [input]
+ 
+ (if (seq? input)  input [input])
+)
+#+end_src
 
+#+RESULTS: arr-flatten
+: ;;=> #'arrows-extra.core/arr-flatten
+
+Test
+#+begin_src clojure
+(conduit-map (arr-flatten 1 4) ["a" ["b" "c"] "d" "e"])
+
+#+end_src
+
+#+RESULTS:
+: ;;=> ("a" ["b" "c"] "d" "e")
 
 *** lifting and dropping
 It is often the case that the output from one arrow needs to be lifted
@@ -486,35 +469,8 @@ and [[state] ] -> [state] is a drop
   )
 #+end_src
 
-#+RESULTS: arr-lift-drop
-: ;;=> #'arrows-extra.core/arr-drop
-
 #+RESULTS:
 |   | #'arrows-extra.core/arr-drop |
-
-
-*** Flattening
-#+name: arr-flatten
-#+begin_src clojure
-
-(defn arr-flatten [n]
-
-(arr-accum-counting [] (fn [state input] (concat state (if (coll? input) input [input]))) n)
-)
-
-#+end_src
-
-#+RESULTS: arr-flatten
-: ;;=> #'arrows-extra.core/arr-flatten
-
-Test
-#+begin_src clojure
-(conduit-map (arr-flatten 4) ["a" ["b" "c"] "d" "e"])
-
-#+end_src
-
-#+RESULTS:
-: ;;=> (("a" "b" "c" "d" "e"))
 
 *** Partitioning
 The logic here is you have an input which looks like [a b c d]
@@ -560,34 +516,8 @@ Test
 #+RESULTS:
 : ;;=> ("a1clojure.lang.LazySeq@19ce2" "a2clojure.lang.LazySeq@19d22")
 
-* IO arrows
-Here are some useful io arrows
-
-#+name: arr-outputstreams
-#+begin_src clojure
-(import [java.io FileOutputStream PrintStream])
-
-(def-arr arr-outputstream [input]
- (FileOutputStream. input)
-)
-
-(def-arr arr-printstream [input]
- (PrintStream. input)
-
-)
-#+end_src
-
-#+RESULTS: arr-outputstream
-: ;;=> #'arrows-extra.core/arr-printstream
-
 * Tangle
 
-#+begin_src clojure :tangle src/arrows_extra/io.clj :noweb yes
-(ns arrows-extra.io)
-<<arr-outputstreams>>
-
-
-#+end_src
 #+begin_src clojure :tangle src/arrows_extra/core.clj :noweb yes
 (ns arrows-extra.core)
 <<use-arrows>>
@@ -598,19 +528,15 @@ Here are some useful io arrows
 <<arr-edge>>
 <<arr-switch>>
 <<arr-switch-between>>
-<<arr-toggle-switches>>
 <<arr-toggle>>
 <<arr-toggle-inclusive>>
 <<arr-gate>>
 <<arr-between>>
 <<arr-once>>
 <<arr-accum>>
-<<arr-accum-counting>>
 <<arr-lift-drop>>
-<<arr-flatten>>
 <<arr-partition>>
-<<arr-outputstream>>
-<<arr-printstream>>
+
 #+end_src
 
 #+begin_src clojure :tangle project.clj

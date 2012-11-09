@@ -53,34 +53,40 @@
   (arr-switch -1  (fn [state input] (inc state)) (fn [state] (and (>= state lower) (<= state upper))) trueChannel falseChannel)
   )
 
-(defn arr-toggle [pred-on pred-off]
-(a-comp
-(a-loop 
- (a-arr (fn [[state input]] [(if (pred-off input) false (or state
- (pred-on input))) input])) 
- false
- (a-arr first))
- (a-select true pass-through false block)
- )
-) 
+(defn arr-toggle-switch [default-channel pred-on pred-off channel & more]
+ (a-comp
+   (a-loop
+    (a-arr(fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input]))
+    false
+    (a-arr first)
+   )
+  (a-select true channel false (if (empty? more) default-channel (apply (partial arr-toggle-switch default-channel) more)))
+)
+)
 (defn- boolean-to-int [value]
 
   (if value 1 0)
   )
 
 
-(defn arr-toggle-inclusive [pred-on pred-off]
+(defn arr-toggle-switch-inclusive [default-channel pred-on pred-off channel & more]
                           
                               (a-comp (a-loop (a-arr (fn [[state input]] [(if (pred-off input) false (or state (pred-on input))) input])) false (a-arr first))
                                         ;  (a-arr (fn [data] [{} data]))
                                       (a-all (a-arr (constantly {})) pass-through)
                                       (arr-edge (fn [lst nxt] (- (boolean-to-int (first lst)) (boolean-to-int (first nxt)))))
                                       (a-arr (fn [[ev [state data]]] [(or state (= (:edge ev) :falling)) data]))
-                                      (a-select true pass-through false block)
+                                      (a-select true channel false (if (empty? more) default-channel (apply (partial arr-toggle-switch default-channel) more)))
 
                                       )
 
                               )
+(defn arr-toggle [pred-on pred-off]
+ (arr-toggle-switch pass-through pred-on pred-off block)
+) 
+(defn arr-toggle-inclusive [pred-on pred-off]
+ (arr-toggle-switch-inclusive pass-through pred-on pred-off block)
+)
 (defn arr-gate [init state-fn pred-fn]
   (arr-switch init state-fn pred-fn pass-through block)
 )
@@ -95,19 +101,64 @@
 (defn arr-accum
   
 
-  [init accum-fn pred]
+  [init accum-fn pred & [strip-fn]]
 
   (a-comp (a-loop (a-arr (fn [[state input]] (if (pred state input)
  [state input] [(accum-fn state input) input])))
             init 
             (a-arr (fn [[ state input]] (if (pred state input) init
  state))))
-            (a-selectp (fn [[state input]] (pred state input))  true (a-arr first) false block)) 
+            (a-selectp (fn [[state input]] (pred state input))  true (a-arr (if strip-fn (fn [[state input]] (strip-fn state)) first)) false block)) 
   )
 
-(defn arr-accum-greedy [init accum-fn pred]
-(a-comp (a-loop (a-arr (fn [[state input]] [(accum-fn state input)
+(defn arr-accum-greedy [init accum-fn pred & [strip-fn]]
+ (a-comp (a-loop (a-arr (fn [[state input]] [(accum-fn state input)
  input]))
  init (a-arr first)) 
-(a-selectp (fn [[state input]] (pred state input))  true (a-arr first) false block) )
+ (a-selectp (fn [[state input]] (pred state input))  true (a-arr (if strip-fn (fn [[state input]] (strip-fn state)) first)) false block))
+)
+
+(defn arr-accum-counting [init accum-fn n]
+ 
+   (arr-accum [0 init] (fn [[count state] input] [(inc count) (accum-fn state input)])
+                               (fn [[count state] input] (== count n))
+                               (fn [[count state]] state)
+   )
+  
+ 
+ 
+)
+
+(def-proc arr-lift [input]
+
+[[input]]
+  )
+  
+
+    
+(def arr-drop
+
+  (a-par pass-through)
+  )
+
+(defn arr-flatten [n]
+
+(arr-accum-counting [] (fn [state input] (concat state (if (coll? input) input [input]))) n)
+)
+
+(defn arr-partition 
+
+([length channel & more]
+  
+   (arr-switch-between 0 (dec length)
+                                (a-comp 
+                                 (arr-accum-counting [] (fn [state input] (concat state [input])) length)
+                                 channel)
+                                (apply arr-partition more)
+   ))
+  
+ 
+([]
+ pass-through
+)
 )
